@@ -1,0 +1,297 @@
+#+TITLE: Readme
+
+* Raw Data
+#+NAME: sra
+| Strain | Accession   | Type     |
+|--------+-------------+----------|
+| MS2167 | SRR20020687 | Illumina |
+| MS2074 | SRR20020688 | Illumina |
+| MS2058 | SRR20020689 | Illumina |
+| MS2005 | SRR20020690 | Illumina |
+| MS2167 | SRR20020691 | Nanopore |
+| MS2074 | SRR20020692 | Nanopore |
+| MS2058 | SRR20020693 | Nanopore |
+| MS2005 | SRR20020694 | Nanopore |
+
+- Download SRA data
+  #+begin_src sh :tangle 0-raw/downlaod.sh :var sra=sra[,1]
+ROOT=$(git rev-parse --show-toplevel)
+
+for SRA in "${sra[@]}"; do
+
+    URL=ftp://ftp.sra.ebi.ac.uk/vol1/fastq/${SRA:0:6}/
+
+    if [ ${#SRA} -gt 9 ]; then
+        TMP=00${SRA:9}
+        URL+=${TMP: -3}/
+    fi
+
+    URL+=$SRA
+
+    wget -O $ROOT/0-raw/${SRA}_1.fastq.gz $URL/${SRA}_1.fastq.gz
+    wget -O $ROOT/0-raw/${SRA}_2.fastq.gz $URL/${SRA}_2.fastq.gz
+
+done
+
+  #+end_src
+
+* Assemble
+
+1) Canu
+   #+header: :var names=sra[6:9,0]
+   #+header: :var data=sra[6:9,0:1]
+   #+BEGIN_SRC sh :tangle 1-assemble/1-canu/run.sh
+ROOT=$(git rev-parse --show-toplevel)
+cd $ROOT
+
+PATH=$ROOT/apps/canu-1.9/bin:$PATH
+
+name=${names[$SLURM_ARRAY_TASK_ID]}
+
+canu -d $ROOT/1-assemble/1-canu/$name -p "$name" \
+    genomeSize=2m useGrid=false \
+    -nanopore-raw $ROOT/0-raw/${data[$name]}_1.fastq.gz
+
+
+   #+END_SRC
+
+2) Trim
+   #+header: :var names=sra[6:9,0]
+   #+BEGIN_SRC sh :tangle 1-assemble/2-trim/run.sh
+ROOT=$(git rev-parse --show-toplevel)
+DIR=$ROOT/1-assemble
+cd $DIR
+
+name=${names[$SLURM_ARRAY_TASK_ID]}
+assembly=$DIR/1-canu/$name/$name.contigs.fasta
+
+ml igbb samtools blast
+ml singularity
+
+mkdir $DIR/2-trim/$name
+
+grep '>' -A10 --no-group-separator $assembly |
+    blastn -query - -subject $assembly -outfmt '6 std qcovs' -out $DIR/2-trim/$name/blast.out
+
+awk '$1 == $2 && $3 >= 95 && $13 >= 95 && $9 > 1000 && $9 < $10 && $1 != last {
+     printf "%s:1-%d\n", $1, $9; last=$1}' $DIR/2-trim/$name/blast.out \
+         > $DIR/2-trim/$name/trim.lst
+
+xargs samtools faidx $assembly \
+    < $DIR/2-trim/$name/trim.lst \
+    > $DIR/2-trim/$name/trim.fa
+
+sed 's/:.*//' $DIR/2-trim/$name/trim.lst |
+    grep -f - -v $assembly.fai |
+    cut -f 1 > $DIR/2-trim/$name/unchanged.txt
+
+cat $DIR/2-trim/$name/unchanged.txt |
+    xargs samtools faidx $assembly >> $DIR/2-trim/$name/trim.fa
+
+  #+END_SRC
+
+3) Fix start
+   #+BEGIN_SRC text :tangle 1-assemble/3-fixstart/dnaa.fa
+>NC_000913.3:c3883729-3882326 Escherichia coli str. K-12 substr. MG1655, complete genome
+GTGTCACTTTCGCTTTGGCAGCAGTGTCTTGCCCGATTGCAGGATGAGTTACCAGCCACAGAATTCAGTA
+TGTGGATACGCCCATTGCAGGCGGAACTGAGCGATAACACGCTGGCCCTGTACGCGCCAAACCGTTTTGT
+CCTCGATTGGGTACGGGACAAGTACCTTAATAATATCAATGGACTGCTAACCAGTTTCTGCGGAGCGGAT
+GCCCCACAGCTGCGTTTTGAAGTCGGCACCAAACCGGTGACGCAAACGCCACAAGCGGCAGTGACGAGCA
+ACGTCGCGGCCCCTGCACAGGTGGCGCAAACGCAGCCGCAACGTGCTGCGCCTTCTACGCGCTCAGGTTG
+GGATAACGTCCCGGCCCCGGCAGAACCGACCTATCGTTCTAACGTAAACGTCAAACACACGTTTGATAAC
+TTCGTTGAAGGTAAATCTAACCAACTGGCGCGCGCGGCGGCTCGCCAGGTGGCGGATAACCCTGGCGGTG
+CCTATAACCCGTTGTTCCTTTATGGCGGCACGGGTCTGGGTAAAACTCACCTGCTGCATGCGGTGGGTAA
+CGGCATTATGGCGCGCAAGCCGAATGCCAAAGTGGTTTATATGCACTCCGAGCGCTTTGTTCAGGACATG
+GTTAAAGCCCTGCAAAACAACGCGATCGAAGAGTTTAAACGCTACTACCGTTCCGTAGATGCACTGCTGA
+TCGACGATATTCAGTTTTTTGCTAATAAAGAACGATCTCAGGAAGAGTTTTTCCACACCTTCAACGCCCT
+GCTGGAAGGTAATCAACAGATCATTCTCACCTCGGATCGCTATCCGAAAGAGATCAACGGCGTTGAGGAT
+CGTTTGAAATCCCGCTTCGGTTGGGGACTGACTGTGGCGATCGAACCGCCAGAGCTGGAAACCCGTGTGG
+CGATCCTGATGAAAAAGGCCGACGAAAACGACATTCGTTTGCCGGGCGAAGTGGCGTTCTTTATCGCCAA
+GCGTCTACGATCTAACGTACGTGAGCTGGAAGGGGCGCTGAACCGCGTCATTGCCAATGCCAACTTTACC
+GGACGGGCGATCACCATCGACTTCGTGCGTGAGGCGCTGCGCGACTTGCTGGCATTGCAGGAAAAACTGG
+TCACCATCGACAATATTCAGAAGACGGTGGCGGAGTACTACAAGATCAAAGTCGCGGATCTCCTTTCCAA
+GCGTCGATCCCGCTCGGTGGCGCGTCCGCGCCAGATGGCGATGGCGCTGGCGAAAGAGCTGACTAACCAC
+AGTCTGCCGGAGATTGGCGATGCGTTTGGTGGCCGTGACCACACGACGGTGCTTCATGCCTGCCGTAAGA
+TCGAGCAGTTGCGTGAAGAGAGCCACGATATCAAAGAAGATTTTTCAAATTTAATCAGAACATTGTCATC
+GTAA
+
+   #+END_SRC
+
+   #+header: :var names=sra[6:9,0]
+   #+BEGIN_SRC sh :tangle 1-assemble/3-fixstart/run.sh
+ROOT=$(git rev-parse --show-toplevel)
+DIR=$ROOT/1-assemble
+cd $DIR
+
+ml singularity
+
+name=${names[$SLURM_ARRAY_TASK_ID]}
+assembly=$DIR/2-trim/$name/trim.fa
+
+mkdir $DIR/3-fixstart/$name
+
+singularity exec -B$ROOT --cleanenv $ROOT/apps/circlator.simg \
+    circlator fixstart \
+    --genes_fa $DIR/3-fixstart/dnaa.fa \
+    --ignore $DIR/2-trim/$name/unchanged.txt \
+    $assembly \
+    $DIR/3-fixstart/$name/fixstart
+
+   #+END_SRC
+
+4) Filter
+   #+header: :var names=sra[2:5,0]
+   #+header: :var data=sra[2:5,0:1]
+   #+BEGIN_SRC sh :tangle 1-assemble/4-filter/bwa.sh
+ROOT=$(git rev-parse --show-toplevel)
+DIR=$ROOT/1-assemble
+cd $DIR
+
+ml igbb samtools bwa
+
+name=${names[$SLURM_ARRAY_TASK_ID]}
+assembly=$DIR/3-fixstart/$name/fixstart.fasta
+
+mkdir $DIR/4-filter/$name
+
+bwa index $assembly
+
+bwa mem -t $SLURM_CPUS_PER_TASK $assembly \
+    $ROOT/raw/${data[$name]}_{1,2}.fastq.gz |
+    samtools view -bS -F4 - |
+    samtools sort -o $DIR/4-filter/$name/frags.bam -T $DIR/4-filter/$name/frags.tmp -
+
+samtools index $DIR/4-filter/$name/frags.bam
+
+   #+END_SRC
+
+   #+header: :var names=sra[2:5,0]
+   #+BEGIN_SRC sh :tangle 1-assemble/4-filter/run.sh
+ROOT=$(git rev-parse --show-toplevel)
+DIR=$ROOT/1-assemble
+cd $DIR
+
+ml igbb samtools bwa
+
+name=${names[$SLURM_ARRAY_TASK_ID]}
+assembly=$DIR/3-fixstart/$name/fixstart.fasta
+
+ml igbb samtools
+bedtools () { $ROOT/apps/bedtools-2.29.2 $@; }
+
+samtools faidx $assembly
+
+bedtools genomecov -ibam $DIR/4-filter/$name/frags.bam > $DIR/4-filter/$name/genome.cov
+
+awk '$1 != "genome" && $2 == 0 && $5 == 1 {s[$1]++}
+     {_[$1]++}
+     END {
+       s["genome"]++;
+       for(k in _)
+         if(!s[k])
+           print k
+     }' $DIR/4-filter/$name/genome.cov > $DIR/4-filter/$name/filter.lst
+
+
+xargs samtools faidx $assembly \
+    < $DIR/4-filter/$name/filter.lst\
+    > $DIR/4-filter/$name/filtered.fa
+
+  #+END_SRC
+
+5) Pilon
+   #+header: :var names=sra[2:5,0]
+   #+BEGIN_SRC sh :tangle 1-assemble/5-pilon/run.sh
+ROOT=$(git rev-parse --show-toplevel)
+DIR=$ROOT/1-assemble
+cd $DIR
+
+ml igbb samtools bwa
+
+name=${names[$SLURM_ARRAY_TASK_ID]}
+assembly=$DIR/4-filter/$name/filtered.fa
+
+ml igbb bwa samtools
+
+mkdir $DIR/5-pilon/$name
+
+java -Xmx16G -jar $ROOT/apps/pilon-1.23.jar \
+    --genome $assembly \
+    --frags $DIR/4-filter/$name/frags.bam \
+    --outdir $DIR/5-pilon/$name/ \
+    --output pilon \
+    --changes
+
+  #+END_SRC
+
+6) Coverage
+   #+header: :var names=sra[2:5,0]
+   #+header: :var illumina=sra[2:5,0:1]
+   #+header: :var nanopore=sra[6:9,0:1]
+   #+BEGIN_SRC sh :tangle 1-assemble/6-coverage/run.sh
+ROOT=$(git rev-parse --show-toplevel)
+DIR=$ROOT/1-assemble
+cd $DIR
+
+ml igbb samtools bwa minimap2
+ml singularity
+bedtools () { $ROOT/apps/bedtools-2.29.2 $@; }
+
+name=${names[$SLURM_ARRAY_TASK_ID]}
+assembly=$DIR/5-pilon/$name/pilon.fasta
+
+mkdir $DIR/6-coverage/$name
+
+minimap2 -x map-ont -d $assembly.mmi $assembly
+bwa index $assembly
+samtools faidx $assembly
+
+minimap2 -ax map-ont -t $SLURM_CPUS_PER_TASK -a --sam-hit-only \
+    $assembly.mmi $ROOT/0-raw/${nanopore[$name]}_1.fastq.gz |
+    samtools sort -m10G -o $DIR/6-coverage/$name/nanopore.bam \
+        -T $DIR/6-coverage/$name/nanopore.tmp -
+
+bwa mem -t $PBS_NUM_PPN -R "@RG\tID:$name\tPL:illumina\tSM:$name\tLB:$name" \
+    $assembly $ROOT/0-raw/${illumina[$name]}_{1,2}.fastq.gz |
+    samtools fixmate -O bam - - |
+    samtools sort -o $DIR/6-coverage/${name}/illumina.bam \
+        -T $DIR/6-coverage/${name}/illumina.tmp -
+
+samtools index $DIR/6-coverage/${name}/illumina.bam
+
+for type in nanopore illumina; do
+    bedtools genomecov -ibam $DIR/6-coverage/$name/$type.bam > $DIR/6-coverage/$name/$type.gencov
+    bedtools genomecov -bga -ibam $DIR/6-coverage/$name/$type.bam > $DIR/6-coverage/$name/$type.perbase
+
+    bedtools makewindows -g $assembly.fai -n 1 |
+        bedtools coverage -sorted -a - -b $DIR/6-coverage/$name/$type.bam -g $assembly.fai \
+            > $DIR/6-coverage/$name/$type.hist
+
+    bedtools makewindows -g $assembly.fai -w 100 |
+        bedtools coverage -sorted -a - -b $DIR/6-coverage/$name/$type.bam -g $assembly.fai \
+            > $DIR/6-coverage/$name/$type.coverage
+done
+   #+END_SRC
+
+* Annotation
+1) Prokka
+   #+header: :var names=sra[2:5,0]
+   #+BEGIN_SRC sh :tangle 2-annotation/1-prokka/run.sh
+ROOT=$(git rev-parse --show-toplevel)
+DIR=$ROOT/2-annotation
+cd $DIR
+
+
+ml singularity
+prokka () { singularity exec -B $ROOT $ROOT/apps/prokka-v1.14.6.sif prokka $@;}
+
+for name in "${names[@]]}"; do
+    assembly=$ROOT/1-assembly/5-pilon/$name/pilon.fasta
+
+    prokka --cpus 12 \
+        --outdir $DIR/1-prokka/$name \
+        --prefix $name \
+        --locustag $name \
+        $assembly
+done
+#+END_SRC
