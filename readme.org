@@ -1,4 +1,4 @@
-#+TITLE: Readme
+#+TITLE: Assembly and Annotation of Four C. jejuni Strains
 
 * Raw Data
 #+NAME: sra
