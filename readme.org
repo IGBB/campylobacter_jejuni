@@ -273,6 +273,40 @@ for type in nanopore illumina; do
 done
    #+END_SRC
 
+  #+begin_src sh
+for file in 6-coverage/MS*/*.gencov ; do
+    echo $file;
+    awk '{t[$1]+=$2*$3; c[$1]+=$3;} END {for(i in t) print i, t[i]/c[i];}' $file;
+done
+  #+end_src
+
+| MS2005                      |  Illumina | Nanopore |
+|-----------------------------+-----------+----------|
+| genome                      |   587.654 |  732.671 |
+| tig00000001:1-1748626_pilon |   571.423 |   736.11 |
+| tig00000002:1-5175_pilon    |   6746.58 |  404.858 |
+| tig00000005_pilon           | 0.0600298 |  15.5255 |
+
+
+| MS2058                      | Illumina | Nanopore |
+|-----------------------------+----------+----------|
+| genome                      |  885.409 |  465.478 |
+| tig00000002:1-40652_pilon   |  1085.76 |  231.062 |
+| tig00000006:1-1750266_pilon |  889.547 |  472.265 |
+| tig00000007_pilon           |  520.681 |  409.633 |
+
+
+| MS2074                      | Illumina | Nanopore |
+|-----------------------------+----------+----------|
+| genome                      |  986.434 |  690.612 |
+| tig00000001:1-1621348_pilon |  986.434 |  690.612 |
+
+| MS2169                      | Illumina | Nanopore |
+|-----------------------------+----------+----------|
+| genome                      |  1007.31 |  950.819 |
+| tig00000001:1-1702611_pilon |  1007.31 |  950.819 |
+
+
 * Annotation
 1) Prokka
    #+header: :var names=sra[2:5,0]
@@ -283,7 +317,7 @@ cd $DIR
 
 
 ml singularity
-prokka () { singularity exec -B $ROOT $ROOT/apps/prokka-v1.14.6.sif prokka $@;}
+prokka () { singularity exec -B $ROOT $ROOT/apps/prokka-v1.13.sif prokka $@;}
 
 for name in "${names[@]]}"; do
     assembly=$ROOT/1-assembly/5-pilon/$name/pilon.fasta
